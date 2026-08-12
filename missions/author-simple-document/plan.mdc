@@ -262,7 +262,9 @@ USER_CHECKPOINT — retry planner spawn, revise plan scope, or abort after child
   **`markupMode`** (`pending` | `final` — default **`final`** when §2a omitted or
   target is not **`.docx`**).
 - **Expected output:** Child result with `documentComplete: true`, `relativeFilePath`,
-  `markupMode`, `markupPending`, `backupsRemoved`, `sotPresent`, `sotConsulted`,
+  `markupMode`, `markupPending`, `revisionRetentionMode`, `priorRevisionToken`,
+  `workingRevisionToken`, `revisionArchivePath`, `revisionReverted`,
+  `backupsRemoved`, `sotPresent`, `sotConsulted`,
   `continuationStatus: terminal`.
 - **Next-step resolution:** Child success → §6a. Child failure or user stops early → USER_CHECKPOINT below, then §6a or §10.
 
