@@ -41,6 +41,7 @@ warmUpRules:
   - .sedea/centers/documentation-management/missions/author-simple-document/plan.mdc
   - .sedea/centers/documentation-management/rules/20_source-of-truth.mdc
   - .sedea/centers/documentation-management/rules/10_required-tools.mdc
+  - .sedea/centers/documentation-management/rules/30_document-revision-retention.mdc
 ---
 
 # Author Simple Document Author
@@ -83,7 +84,8 @@ document is done. Do not edit without a plan where `planApproved` was true.
       document-complete gate — do not skip review.
    4. Loop substeps 1–3 until the user confirms document complete or defers.
 5. Record `documentComplete: true` only after explicit user confirmation at the
-   document-complete gate and after § *Post-content-approval backup cleanup* below.
+   document-complete gate and after § *Post-content-approval revision retention*
+   below.
 
 ## Source of truth (binding)
 
@@ -116,8 +118,11 @@ it was consulted so the parent can run §6a.
 When **`relativeFilePath`** ends with **`.docx`** and this lane performs material
 **Write** / **StrReplace** / unzip-based OOXML edits on the working file:
 
-1. **Pre-edit backup:** `cp` the target to a timestamped **`*.bak-YYYYMMDDHHMMSS`**
-   beside the file before the first material edit in the pass.
+1. **Pre-edit retention:** Follow center rule **30**
+   (**`rules/30_document-revision-retention.mdc`**) before the first material
+   edit — **`rev-folder`** (archive prior revision under **`revisions/`**, bump
+   main-folder basename) when the basename has a REV letter/number token;
+   otherwise **`bak`** (timestamped **`*.bak-YYYYMMDDHHMMSS`** beside the file).
 2. **OOXML-safe edits:** Prefer surgical edits inside **`word/document.xml`**
    (and related body parts). **Forbidden:** rewriting **`[Content_Types].xml`**
    or **`*.rels`** with prefixed default xmlns (**`ns0:`**, **`ns1:`**, etc.);
@@ -192,28 +197,29 @@ exists; separate draft-review modal; *Approve draft → write final copy*; *Skip
 treat current text as final*; offering **Confirm document complete** before finals
 exist.
 
-## Post-content-approval backup cleanup (binding)
+## Post-content-approval revision retention (binding)
 
 After content approval completes at the **document-complete** USER_CHECKPOINT and
 **before** calling **`mission_control_send_agent_result`**:
 
-1. **Enumerate:** Beside the working file at `localPath` + `relativeFilePath`, list
-   files matching **`*.bak-*`** (timestamped backups from § *`.docx` programmatic
-   edit contract* **Pre-edit backup**).
-2. **Remove:** Delete **all** enumerated backups for this working document in the
-   pass.
-3. **Confirm:** Proceed to terminal MCP result only when deletion succeeded or no
-   backups were present. When deletion fails, report in **`summary`** and
-   **`errors`** — **forbidden:** terminal success while backups remain.
-4. **Output:** Set **`outputs.backupsRemoved`** to the count deleted (`0` when none).
+1. Follow center rule **30** § post-approval for the active mode
+   (**`rev-folder`**: keep archive under **`revisions/`**; **`bak`**: delete
+   **`*.bak-*`** beside the working file).
+2. On abandon/abort after a **`rev-folder`** archive+bump, run rule **30** §
+   *Abandon → propose revert* before the terminal result.
+3. Set retention outputs per rule **30** (`revisionRetentionMode`, tokens/paths,
+   `revisionReverted`, `backupsRemoved`).
 
-**Forbidden:** emitting **`mission_control_send_agent_result`** while **`*.bak-*`**
-backups for the working document remain beside the target file.
+**Forbidden:** emitting **`mission_control_send_agent_result`** while **`bak`**
+mode still has **`*.bak-*`** backups for the working document beside the target
+file; silently reverting a **`rev-folder`** bump without structured choice.
 
 ## Completion (spawned)
 
 **outputs:** `documentComplete`, `relativeFilePath`, `revisionCount`, `markupMode`,
-`markupPending`, `sotPresent`, `sotConsulted`, `backupsRemoved`, `continuationStatus`
+`markupPending`, `sotPresent`, `sotConsulted`, `revisionRetentionMode`,
+`priorRevisionToken`, `workingRevisionToken`, `revisionArchivePath`,
+`revisionReverted`, `backupsRemoved`, `continuationStatus`
 
 ### MCP result preflight (`mission_control_send_agent_result`)
 
@@ -221,7 +227,7 @@ backups for the working document remain beside the target file.
 |------|--------|
 | R1 | Call **`mission_control_send_agent_result`** with **`status`**, **`summary`**, optional **`outputs`** / **`errors`** |
 | R2 | **Forbidden args absent** — no **`correlationId`**, **`dispatchId`**, **`slotId`**, or other host-resolved keys |
-| R3 | Populate **`outputs`** from the required field list above; `documentComplete` only after user confirmation; set `markupMode` / `markupPending` per § *Pending markup mode*; set `sotPresent` / `sotConsulted` honestly; set **`backupsRemoved`** after § *Post-content-approval backup cleanup* |
+| R3 | Populate **`outputs`** from the required field list above; `documentComplete` only after user confirmation; set `markupMode` / `markupPending` per § *Pending markup mode*; set `sotPresent` / `sotConsulted` honestly; set revision-retention fields after § *Post-content-approval revision retention* |
 | R4 | Re-emit updated MCP result after user-requested follow-up on this lane (same spawn session; host resolves **`correlationId`**) |
 
 Stop after the MCP result call. Do not emit another **`mission_control_spawn_agent`** on this lane.

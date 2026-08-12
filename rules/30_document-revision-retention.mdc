@@ -1,0 +1,108 @@
+---
+description: >-
+  Document revision retention — REV-letter/number main-folder + revisions/
+  archive; non-REV timestamped bak beside file; abandon revert proposal.
+globs: "**/*"
+alwaysApply: false
+---
+
+# Document revision retention
+
+**Normative** for author-family lanes that perform material edits on working
+documents under a registered documentation **`localPath`** (notably
+**author-simple-document** and **author-multi-part-document** author /
+revision-author skills). Skills **must** follow this rule instead of inventing
+a second backup policy.
+
+## Scope
+
+Applies when the lane is about to perform the **first material edit** in the
+pass on a working file at **`localPath` + `relativeFilePath`** (including
+**`.docx`** OOXML edits).
+
+| Working basename | Mode |
+|------------------|------|
+| Contains a **revision token** (below) | **`rev-folder`** |
+| No revision token | **`bak`** (legacy timestamped beside-file) |
+
+## Revision token detection (binding)
+
+Treat as a revision token when the **basename** (not parent folders) matches,
+case-insensitive, a substring of either form (ASCII word boundary preferred):
+
+- **Letter:** `REV` + optional separators (` `, `-`, `_`) + **one or more letters**
+  (examples: `REV A`, `REV-B`, `Rev_C`, `rev AA`)
+- **Number:** `REV` + optional separators + **one or more digits**
+  (examples: `REV 1`, `REV-01`, `Rev_2`)
+
+When multiple tokens appear, use the **last** match in the basename. When none
+match ? **`bak`** mode.
+
+## `rev-folder` mode (binding)
+
+Let **`parentDir`** = directory of the working file; **`revisionsDir`** =
+**`{parentDir}/revisions`**.
+
+Before the first material edit in the pass:
+
+1. **Ensure archive dir** — create **`revisionsDir`** if missing.
+2. **Archive current** — `cp` the working file to **`{revisionsDir}/{basename}`**.
+   If that archive path already exists, stop and open structured choice (overwrite
+   archive · choose alternate archive name · abort edit) — **forbidden** silent
+   overwrite.
+3. **Bump revision on main** — compute the next token (letter: increment last
+   letter sequence A?B?…?Z?AA; number: increment integer, preserve zero-padding
+   width when present). Rename/move the **main-folder** working file so its
+   basename substitutes the old token with the new token (same extension).
+4. **Rebind paths** — update lane **`relativeFilePath`** (and any Relevant Links
+   registration) to the **new** main-folder basename before editing.
+5. **Edit only the new main-folder revision** — **forbidden** editing files under
+   **`revisions/`** as the working copy.
+
+**Main folder invariant:** After step 3, the document’s parent directory holds
+**one** current revision of that document family (plus unrelated files). Prior
+revision files live under **`revisions/`**.
+
+### Abandon ? propose revert (binding)
+
+When the user **abandons** the pass (or chooses an abort path that discards
+uncommitted document work) **after** `rev-folder` archive+bump ran:
+
+1. Open structured choice proposing **revert to previous revision** (restore
+   archived file from **`revisions/`** back to **`parentDir`** under the prior
+   basename; remove the incomplete bumped main-folder file) · keep bumped file ·
+   defer — then the universal trailer.
+2. On user confirm revert: perform restore + remove incomplete main file; set
+   **`outputs.revisionReverted: true`** and restore **`relativeFilePath`** to the
+   prior basename.
+3. **Forbidden:** silent revert without structured choice; deleting the archive
+   copy as part of a successful (non-abandon) completion.
+
+### Post-approval (rev-folder)
+
+On successful content approval, **keep** the archive under **`revisions/`**.
+Do **not** require deleting `*.bak-*` for this mode. Set:
+
+- **`outputs.revisionRetentionMode`:** `rev-folder`
+- **`outputs.priorRevisionToken`**, **`outputs.workingRevisionToken`**
+- **`outputs.revisionArchivePath`** — path under **`revisions/`**
+- **`outputs.revisionReverted`:** `false` (unless abandon-revert ran)
+- **`outputs.backupsRemoved`:** `0`
+
+## `bak` mode (binding) — no revision token
+
+1. **Pre-edit:** `cp` the target to a timestamped **`*.bak-YYYYMMDDHHMMSS`**
+   beside the file before the first material edit.
+2. **Post-content-approval cleanup:** After content approval and before terminal
+   MCP result, delete all **`*.bak-*`** for this working document beside the
+   file; set **`outputs.backupsRemoved`** to the count deleted (`0` when none).
+   **Forbidden:** terminal success while those backups remain.
+3. Set **`outputs.revisionRetentionMode`:** `bak`; omit or null the rev-folder
+   path/token fields; **`revisionReverted`:** `false`.
+
+## Skill wiring
+
+Author-family **`.docx` programmatic edit contract** **Pre-edit** steps and
+**Post-content-approval backup cleanup** sections **must** invoke this rule
+(by mode) rather than restating a bak-only policy. Non-`.docx` material edits
+still follow the same retention modes when the basename carries a revision token.
