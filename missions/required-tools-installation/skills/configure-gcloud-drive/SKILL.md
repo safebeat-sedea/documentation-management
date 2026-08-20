@@ -1,7 +1,8 @@
 ---
 name: Configure gcloud Drive
 description: >-
-  Confirm GCP console access, authenticate gcloud (user terminal), configure
+  Confirm GCP console access, authenticate gcloud (interactive terminal MCP),
+  configure
   GCP project and service account, enable Drive API, apply rclone Drive
   access, provision Internal Desktop OAuth client_id into rclone config, and
   verify.
@@ -54,8 +55,15 @@ inputs:
     description: rclone remote name to receive client_id/client_secret
     required: false
     default: sedea-gdrive
+  hostingBasename:
+    type: string
+    description: >-
+      HOSTING_ROOT directory basename for gcloud configuration naming
+      (sedea-<hostingBasename>). Derive from HOSTING_ROOT when omitted.
+    required: false
 timeoutMs: 1800000
 warmUpRules:
+  - .sedea/centers/documentation-management/rules/15_gcloud-multi-account.mdc
   - .sedea/centers/documentation-management/rules/10_required-tools.mdc
   - .sedea/centers/documentation-management/missions/required-tools-installation/plan.mdc
 ---
@@ -64,7 +72,8 @@ warmUpRules:
 
 Spawned specialist for Documentation Management: after the **gcloud** CLI is
 available, confirm the user can open Google Cloud in the browser, authenticate
-in the terminal, configure a GCP project and service account, enable Google
+via **`mission_control_start_interactive_terminal`** preset **`gcloud`**, configure
+a GCP project and service account, enable Google
 Drive API, apply rclone-compatible Drive access, provision an **Internal**
 Desktop OAuth client for rclone (write `client_id` / `client_secret` into
 rclone config — never into chat), and verify.
@@ -108,30 +117,40 @@ org-policy self-heal, rclone script failure, and other gates outside project/SA 
 
 ## Agent shell bootstrap (binding — every turn that runs gcloud)
 
-Before any `gcloud` / org-policy / keys / Drive command in the **agent** shell:
+Follow **`rules/15_gcloud-multi-account.mdc`**. Before any `gcloud` / org-policy /
+keys / Drive command in the **agent** shell:
 
 ```bash
 export CLOUDSDK_CORE_DISABLE_PROMPTS=1
+export GCLOUD_ACCOUNT="<gcloudAccountEmail>"   # after step 2.5 bind
+export CLOUDSDK_AUTH_ACCOUNT="${GCLOUD_ACCOUNT}"   # optional; does not replace --account
 ```
 
 1. Probe with bare **`command -v gcloud`**. Mission Control shells already include
    **`~/bin`** on PATH; registry installs expose Unix gcloud via **`~/bin/gcloud`**.
-2. **Forbidden:** hanging on interactive gcloud prompts (`API … not enabled.
+2. **Every `gcloud` invocation** in agent shells includes
+   **`--account="${GCLOUD_ACCOUNT}"`**. Project-scoped commands also include
+   **`--project="<projectId>"`** — **forbidden:** **`gcloud config set project`**
+   without **`--configuration=`**; **forbidden:** **`gcloud config set account`**
+   and **`gcloud config configurations activate`** anywhere.
+3. **Forbidden:** hanging on interactive gcloud prompts (`API … not enabled.
    Would you like to enable and retry (y/N)?`). Always keep
    `CLOUDSDK_CORE_DISABLE_PROMPTS=1`; pre-enable APIs with
-   `gcloud services enable …` instead of answering `y`.
-3. **Forbidden:** `export PATH="${HOME}/google-cloud-sdk/bin:…"` (or equivalent)
+   `gcloud --account="${GCLOUD_ACCOUNT}" services enable … --project "<id>"`
+   instead of answering `y`.
+4. **Forbidden:** `export PATH="${HOME}/google-cloud-sdk/bin:…"` (or equivalent)
    as normal policy — incomplete symlink exposure is a parent install failure,
-   not a skill workaround. Re-apply **`CLOUDSDK_CORE_DISABLE_PROMPTS=1`** at the
-   start of each substantive shell block.
+   not a skill workaround. Re-apply bootstrap at the start of each substantive
+   shell block.
 
 ## Hardened control-flow (summary)
 
 ```text
 CLOUDSDK_CORE_DISABLE_PROMPTS=1
+export GCLOUD_ACCOUNT="<email>"   # after bind
 probe bare gcloud on PATH
-  → auth list; if empty → external-wait login (unavoidable)
-  → list/create project (checkpoint only if preference ambiguous)
+  → auth list (all accounts); bind email (step 2.5); create named config (no activate)
+  → list/create project with --account + --project flags
   → derive legal SA account id (auto-shorten ≤30; no checkpoint for length alone)
   → create SA when requested
   → pre-enable: orgpolicy, iam, drive, iap (as needed) without prompts
@@ -154,15 +173,36 @@ probe bare gcloud on PATH
 
 ### 1. Confirm GCP access, then authenticate gcloud (user — binding)
 
-0. Run **Agent shell bootstrap**.
-1. Probe auth: `gcloud auth list` (or equivalent). If an active authenticated
-   account exists → continue to step 2.
-2. If **not** authenticated, do **these checks in order** before any project
-   or service-account work:
+0. Run **Agent shell bootstrap** (without **`GCLOUD_ACCOUNT`** until after bind).
+1. Probe credentials: `gcloud auth list --format='value(account)'` (all logged-in
+   accounts — **forbidden:** `--filter=status:ACTIVE` as sole authority).
+
+#### 1.0 Existing accounts — additive auth choice (USER_CHECKPOINT)
+
+When the probe lists **one or more** logged-in accounts:
+
+Open structured choice (paraphrase labels; keep semantics):
+
+- Recap listed account email(s) from the probe.
+- Explain per **`rules/15_gcloud-multi-account.mdc`**: **`gcloud auth login` is
+  additive** — adding another account does **not** remove existing logins.
+- **Use an existing account for this hosting repo** → skip **§1b**; continue to
+  **§2.5** to pick **`gcloudAccountEmail`**.
+- **Add another Google account** → continue to **§1a** then **§1b** (interactive
+  terminal MCP).
+- **Abort** · universal trailer.
+
+When **zero** accounts are listed → continue to **§1a** / **§1b** (no **§1.0**
+gate).
+
+When the account to bind is already known from prior configure handover **and**
+is listed → may skip **§1.0** and continue to **§2.5**.
 
 #### 1a. Make sure Google Cloud is available for their account (browser)
 
-Present short, friendly instructions (paraphrase freely; keep the checklist):
+Run when proceeding to **§1b** (no suitable account yet, or the user chose **Add
+another Google account**). Present
+short, friendly instructions (paraphrase freely; keep the checklist):
 
 1. Open **[https://console.cloud.google.com/](https://console.cloud.google.com/)** in a browser
    (sign in with the Google account they will use for this setup).
@@ -185,26 +225,61 @@ blocked / need help**, **Abort**, **More details for option _**. Do **not**
 proceed to auth login until the user selects a continue path that means
 the Console sidebar and organization/project selector are usable.
 
-#### 1b. Sign in with gcloud in the terminal
+#### 1b. Sign in with gcloud (interactive terminal MCP — binding)
 
-After 1a succeeds:
+After **§1a** succeeds:
 
-1. Ask them to open the integrated terminal with **Ctrl+`** (Control +
-   backtick).
-2. Ask them to run auth login and finish the browser/device flow that gcloud
-   prints:
-   - **Windows (PowerShell):** **`gcloud.cmd auth login`** — prefer `.cmd` over
-     bare `gcloud` (PATH often resolves to `gcloud.ps1`, which default
-     execution policy blocks).
-   - **macOS / Linux:** **`gcloud auth login`**
-3. **Forbidden:** running interactive auth login (`gcloud.cmd auth login` /
-   `gcloud auth login`) in the agent shell for the user.
-4. Open an **external-wait / next-step** structured choice before ending the
-   turn, for example: **Auth done — continue**, **Retry probe**, **Abort**,
-   **More details for option _**.
-5. Resume only after they select a continue path; re-probe auth before
-   proceeding. If still unauthenticated → ask once more or abort per their
-   choice.
+##### 1b.1 Pre-run gate (USER_CHECKPOINT)
+
+Before starting auth, open structured choice:
+
+- Announce the lane will run **`gcloud auth login`** via
+  **`mission_control_start_interactive_terminal`** preset **`gcloud`**.
+- Ask the developer to **focus the browser profile where they are already signed
+  into the intended Google account** — OAuth opens in the default browser; the
+  wrong profile binds the wrong account.
+- Options: **Ready — run gcloud auth login** · **Need to switch browser/profile
+  first** · **Abort** · universal trailer.
+
+**Forbidden:** proceeding to **§1b.2** until the developer selects a continue path.
+
+##### 1b.2 Invoke MCP — lane waiting mode (binding)
+
+On **Ready — run gcloud auth login**:
+
+1. Emit **`mission_control_start_interactive_terminal`** with
+   `{ "preset": "gcloud" }` **alone on this assistant turn** — no other tools,
+   no structured choice on the same turn.
+2. The host opens the integrated terminal + status card and puts the lane in
+   **waiting mode** (**lane waiter** blocks until the terminal session completes).
+3. **Forbidden:** background / non-blocking invocation; treating stdio MCP ack as
+   login success; agent **Shell** for interactive login; freeform **`command`**
+   when preset exists.
+4. **Forbidden:** opening the **§1b.3** post-login gate on the same turn as
+   **§1b.2** before host terminal completion.
+
+The developer completes the browser/device OAuth flow in the integrated terminal
+while the lane waits. Login is **additive** — existing Google accounts on this
+machine remain. **Forbidden:** revoking other accounts to “switch” auth.
+
+##### 1b.3 Post-login gate (USER_CHECKPOINT — after host completion)
+
+**Only after** the host lane waiter reports terminal completion, open structured
+choice:
+
+- **Auth succeeded — continue to account bind**
+- **Login failed / wrong account — retry auth**
+- **Abort**
+- universal trailer
+
+On **continue**: re-probe with read-only agent **Shell** —
+`gcloud auth list --format='value(account)'` (all accounts — **forbidden:**
+`--filter=status:ACTIVE` as sole authority). If the intended account is listed →
+step **2.5**. If not → offer **retry** (return to **§1b.1**) or **abort**.
+
+**On-demand Read:**
+[`.sedea/centers/sedea/docs/interactive-terminal-mcp.md`](../../../../sedea/docs/interactive-terminal-mcp.md)
+§ **`gcloud`** preset.
 
 ### 2. Confirm gcloud CLI
 
@@ -214,25 +289,37 @@ symlink exposure belong to the parent mission registry flow. **Forbidden:**
 PATH-prepending **`${HOME}/google-cloud-sdk/bin`** to paper over a missing
 symlink; declaring success from a full SDK path when bare **`gcloud`** is absent.
 
+### 2.5 Bind Google account and named configuration (binding)
+
+1. Derive **`hostingBasename`** from **`inputs.hostingBasename`** when set; otherwise
+   from **`HOSTING_ROOT`** directory basename (MCP **`sedea_get_hosting_root`**).
+2. Set **`gcloudConfigurationName=sedea-<hostingBasename>`**.
+3. List all logged-in accounts: `gcloud auth list --format='table(account)'`.
+4. USER_CHECKPOINT when multiple accounts — pick which **`gcloudAccountEmail`**
+   binds to **this hosting repo**. When only one account is listed, use it.
+5. Export **`GCLOUD_ACCOUNT=<gcloudAccountEmail>`** and re-apply **Agent shell bootstrap**.
+6. Create named configuration (idempotent, **never activate**):
+
+```bash
+gcloud config configurations create "${gcloudConfigurationName}" --no-activate 2>/dev/null || true
+```
+
+7. **Forbidden:** **`gcloud config set account`**, **`gcloud config configurations activate`**.
+
 ### 3. Select or create GCP project
 
-1. **Auth guard (binding).** Re-apply Agent shell bootstrap, then confirm an
-   active account with `gcloud auth list`. If none is active — or a later
-   `gcloud projects list` returns an auth/credential error — do **not** list or
-   select projects. Route back to step 1b: ask the user to run auth login in the
-   integrated terminal (Ctrl+`) — **Windows:** **`gcloud.cmd auth login`**;
-   **macOS / Linux:** **`gcloud auth login`** — open an external-wait /
-   next-step structured choice (**Auth done — continue** · **Retry probe** ·
-   **Abort** · **More details for option _**), and resume only after auth
-   succeeds.
-2. When authenticated, list accessible projects (`gcloud projects list`).
+1. **Auth guard (binding).** Re-apply Agent shell bootstrap, then confirm
+   **`gcloudAccountEmail`** appears in `gcloud auth list --format='value(account)'`.
+   If missing — route back to **§1.0** / **§1b** (additive interactive-terminal MCP login).
+2. When bound, list accessible projects:
+   `gcloud --account="${GCLOUD_ACCOUNT}" projects list`.
 3. **Derive a suggested new project id** (create path only):
    - GCP **project ids are globally unique**. A fixed default such as
      **`sedea-agent-squad`** may already be owned by another org — **forbidden**
      to present it as a guaranteed-available create id.
-   - Resolve the Google **organization** for the active account
-     (`gcloud organizations list` / project ancestors). Derive
-     **`<org-prefix>`** as a kebab-case slug from the org **display name**
+   - Resolve the Google **organization** for the bound account
+     (`gcloud --account="${GCLOUD_ACCOUNT}" organizations list` / project ancestors).
+     Derive **`<org-prefix>`** as a kebab-case slug from the org **display name**
      (example: org **Sedea** → **`sedea-`**). When multiple orgs apply or the
      prefix is ambiguous, USER_CHECKPOINT — pick organization / prefix before
      suggesting a create id.
@@ -248,20 +335,29 @@ symlink; declaring success from a full SDK path when bare **`gcloud`** is absent
    create option (label = suggested id) and **More details for option _**.
    Do not require free-form id entry when the list is available.
    - **Checkpoint trust:** per § **Checkpoint trust auto-confirm** — an existing
-     project pick proceeds to step **3.6**; a create-option pick runs
-     `gcloud projects create` without a second confirm modal.
+     project pick proceeds to step **3.7**; a create-option pick runs
+     `gcloud --account="${GCLOUD_ACCOUNT}" projects create …` without a second confirm modal.
    - **Non-checkpoint trusts:** confirm the id/name in structured choice
      **before** `gcloud projects create`. Do not create silently.
 5. On **create** failure because the id is **taken** / `ALREADY_EXISTS`, derive
    a new unique suffix (e.g. `-centers`, short hash, or developer-picked slug
    under the same **`<org-prefix>-`**), re-open confirm, and retry — do not stop
    on the first collision alone.
-6. Set the active project for subsequent commands
-   (`gcloud config set project <id>` or `--project` flags).
+6. Record chosen **`projectId`**. Persist project default on the **named**
+   configuration only (do **not** activate):
+
+```bash
+gcloud config set project "<projectId>" --configuration="${gcloudConfigurationName}"
+```
+
+7. Use **`--account="${GCLOUD_ACCOUNT}" --project="<projectId>"`** on all subsequent
+   `gcloud` commands in this skill — **forbidden:** `gcloud config set project`
+   without **`--configuration=`**.
 
 ### 4. Select or create service account; download JSON
 
-1. List service accounts in the chosen project.
+1. List service accounts in the chosen project:
+   `gcloud --account="${GCLOUD_ACCOUNT}" iam service-accounts list --project "<projectId>"`.
 2. **Derive a legal SA account id** before any create checkpoint:
    - Start from `inputs.defaultNewServiceAccountId` or a short host-derived
      seed (prefer forms like `centers-dev-sedea-agent`).
@@ -278,7 +374,8 @@ symlink; declaring success from a full SDK path when bare **`gcloud`** is absent
    **length-legal** id from step 2 (show the final id in the option label).
    - **Checkpoint trust:** per § **Checkpoint trust auto-confirm** — an existing
      SA pick proceeds to step **4**; a create-option pick runs
-     `gcloud iam service-accounts create` without a second confirm modal.
+     `gcloud --account="${GCLOUD_ACCOUNT}" iam service-accounts create …`
+     without a second confirm modal.
    - **Non-checkpoint trusts:** confirm the account id in structured choice
      before `gcloud iam service-accounts create`.
 4. **Create JSON key** with self-healing (binding):
@@ -286,15 +383,15 @@ symlink; declaring success from a full SDK path when bare **`gcloud`** is absent
 #### 4a. Key create + org-policy handler
 
 ```bash
-# After Agent shell bootstrap; substitute PROJECT, SA_EMAIL, KEY_PATH
+# After Agent shell bootstrap; substitute PROJECT, SA_EMAIL, KEY_PATH, GCLOUD_ACCOUNT
 # Pre-enable APIs that keys/org-policy may need (non-interactive):
-gcloud services enable orgpolicy.googleapis.com iam.googleapis.com \
+gcloud --account="${GCLOUD_ACCOUNT}" services enable orgpolicy.googleapis.com iam.googleapis.com \
   --project "$PROJECT" || true
 
 # Remove a prior failed 0-byte key before retry:
 if [[ -f "$KEY_PATH" && ! -s "$KEY_PATH" ]]; then rm -f "$KEY_PATH"; fi
 
-gcloud iam service-accounts keys create "$KEY_PATH" \
+gcloud --account="${GCLOUD_ACCOUNT}" iam service-accounts keys create "$KEY_PATH" \
   --iam-account="$SA_EMAIL" --project="$PROJECT"
 ```
 
@@ -304,13 +401,14 @@ On **`CUSTOM_ORG_POLICY_VIOLATION`** /
 
 1. Parse **`metadata.customConstraints`** from the error — prefer the
    **managed** constraint id when both appear.
-2. Resolve organization id (`gcloud projects get-ancestors` / org list).
-3. If the active user can mutate org IAM, grant
+2. Resolve organization id (`gcloud --account="${GCLOUD_ACCOUNT}" projects get-ancestors …` / org list).
+3. If the bound user can mutate org IAM, grant
    `roles/orgpolicy.policyAdmin` on the **organization** only
-   (`gcloud organizations add-iam-policy-binding … --condition=None`).
+   (`gcloud --account="${GCLOUD_ACCOUNT}" organizations add-iam-policy-binding … --condition=None`).
    **Forbidden:** binding `orgpolicy.policyAdmin` on a **project** (invalid).
 4. Set policy **`enforce: false`** for the constraint on the **project**
-   (`inheritFromParent: false` when needed) via `gcloud org-policies set-policy`.
+   (`inheritFromParent: false` when needed) via
+   `gcloud --account="${GCLOUD_ACCOUNT}" org-policies set-policy …`.
 5. Retry `keys create` with **backoff** (5–10 attempts, 5–15s sleep). Do **not**
    open a modal on the first post-policy failure — wait for propagation.
 6. If project policy is insufficient, set org-level `enforce: false` and retry
@@ -331,7 +429,7 @@ Re-apply **Agent shell bootstrap**. Run (non-interactive — never answer
 enable-API `y/N` prompts):
 
 ```bash
-gcloud services enable drive.googleapis.com --project "<projectId>"
+gcloud --account="${GCLOUD_ACCOUNT}" services enable drive.googleapis.com --project "<projectId>"
 ```
 
 May run while key create is still in org-policy backoff. Record
@@ -366,7 +464,7 @@ provisioning using authenticated **gcloud** + the SA JSON from step 4.
 
 **Preconditions for this step (fail closed):**
 
-1. Active `gcloud` user account (step 1).
+1. Active bound user account (**`gcloudAccountEmail`** from step **2.5**).
 2. SA JSON exists at `credentialsTargetPath` and Drive access from step 6 is applied.
 3. Shipped platform script present — Unix `.sh` or Windows `.ps1` under
    `missions/required-tools-installation/scripts/`. **Forbidden:** inventing a
@@ -385,6 +483,7 @@ provisioning using authenticated **gcloud** + the SA JSON from step 4.
 # Unix
 bash "<script.sh>" \
   --project-id "<projectId>" \
+  --gcloud-account "${GCLOUD_ACCOUNT}" \
   --credentials-path "<credentialsTargetPath>" \
   --rclone-remote "<rcloneRemote>"
 ```
@@ -393,6 +492,7 @@ bash "<script.sh>" \
 # Windows — prefer powershell.exe; pass bash-style flags (script merges Remaining)
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "<script.ps1>" `
   --project-id "<projectId>" `
+  --gcloud-account "${GCLOUD_ACCOUNT}" `
   --credentials-path "<credentialsTargetPath>" `
   --rclone-remote "<rcloneRemote>"
 ```
@@ -447,6 +547,8 @@ call **`mission_control_propose_dispatch_resolution`** (Squad Leader only).
 | Field | Type | Meaning |
 |-------|------|---------|
 | `projectId` | string | Chosen or created project id |
+| `gcloudAccountEmail` | string | Bound Google user account for this hosting repo |
+| `gcloudConfigurationName` | string | Named gcloud config id (`sedea-<hostingBasename>`) — project default only |
 | `serviceAccountEmail` | string | Chosen or created SA email |
 | `credentialsPath` | string | Absolute path to SA JSON |
 | `driveApiEnabled` | boolean | Drive API enable result |
