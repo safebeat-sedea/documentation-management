@@ -1,5 +1,32 @@
 lastSyncedUpstreamSha: 4c6c575506760bcfda177b046c4f656fdd966023
-entries: []
+entries:
+  - commitSha: 81e8a54acfdee9403e8b90bee39a15948bb2810d
+    capturedAt: "2026-08-12T17:02:19Z"
+    summary: Add document revision retention for REV-letter/number files.
+    paths:
+      - missions/author-multi-part-document/skills/author/SKILL.md
+      - missions/author-multi-part-document/skills/revision-author/SKILL.md
+      - missions/author-simple-document/plan.mdc
+      - missions/author-simple-document/skills/author/SKILL.md
+      - rules/30_document-revision-retention.mdc
+  - commitSha: befbe5d45fee3e05ea547e9847e5e42239067a49
+    capturedAt: "2026-08-12T17:16:40Z"
+    summary: Merge pull request #1 from safebeat-sedea/improve/03-document-revision-retention
+    paths: []
+  - commitSha: 520b403d5ff986382fd26e968fde2d7d069cbacd
+    capturedAt: "2026-08-19T19:46:59Z"
+    summary: "Merge upstream-main into main: integrate upstream document-brainstorm improvements while preserving local document revision retention"
+    paths:
+      - missions/author-simple-document/plan.mdc
+  - commitSha: 1b60c43ded42e7fc1e87e51ba288b944baea265c
+    capturedAt: "2026-08-19T19:53:28Z"
+    summary: Merge pull request #2 from safebeat-sedea/improve/documentation-management-upstream-merge
+    paths: []
+  - commitSha: 9e0a38fe8ba9030766b1c355bcdabbdb9cfacdeb
+    capturedAt: "2026-08-19T19:54:29Z"
+    summary: Record downstream change log baseline after upstream sync merge.
+    paths:
+      - downstream-change-log.yaml
 history:
   - upstreamSha: 4c6c575506760bcfda177b046c4f656fdd966023
     syncedAt: "2026-08-19T19:53:28Z"
